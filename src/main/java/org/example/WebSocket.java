@@ -132,7 +132,11 @@ public class WebSocket{
         getBids().entrySet().forEach(entry -> toDepthCacheEntryString(entry, BidPriceList, BidQtyList));
 
 
-        System.out.printf("BID_SIZE   BID_PRICE ASK_PRICE   ASK_SIZE%n");
+        String bs = new String("BID_SIZE");
+        String bp = new String("BID_PRICE");
+        String as = new String("ASK_SIZE");
+        String ap = new String("ASK_PRICE");
+        System.out.printf("%-10s%10s %-10s%10s%n", bs,bp,ap,as);
         for(int i=0; i< param;i++){
             String nul = new String(" ");
             if(i >= askPriceList.size() && i >= BidPriceList.size()){
