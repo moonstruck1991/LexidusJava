@@ -8,75 +8,60 @@ import com.binance.api.client.domain.market.OrderBookEntry;
 
 import java.math.BigDecimal;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class WebSocket{
 
-    private static final String BIDS = "BIDS";
-    private static final String ASKS = "ASKS";
+    // 2 maps to store the number of BIDS and ASKS
+    NavigableMap<BigDecimal,BigDecimal> BIDS;
+    NavigableMap<BigDecimal,BigDecimal> ASKS;
 
     private long lastUpdateId;
 
-    private Map<String, NavigableMap<BigDecimal, BigDecimal>> depthCache;
-
+    // constructor
     public WebSocket(String symbol, int param) {
-        initializeDepthCache(symbol);
-        startDepthEventStreaming(symbol, param);
+        initialize(symbol,param);
+        startStreaming(symbol, param);
     }
 
-    /**
-     * Initializes the depth cache by using the REST API.
-     */
-    private void initializeDepthCache(String symbol) {
+    // initialize the orderbook
+    private void initialize(String symbol, int param) {
         BinanceApiClientFactory factory = BinanceApiClientFactory.newInstance();
         BinanceApiRestClient client = factory.newRestClient();
-        OrderBook orderBook = client.getOrderBook(symbol.toUpperCase(), 10);
+        OrderBook orderBook = client.getOrderBook(symbol.toUpperCase(), param);
 
-        this.depthCache = new HashMap<>();
+        this.ASKS = new TreeMap<>();
+        this.BIDS = new TreeMap<>(Comparator.reverseOrder());
         this.lastUpdateId = orderBook.getLastUpdateId();
 
-        NavigableMap<BigDecimal, BigDecimal> asks = new TreeMap<>(Comparator.reverseOrder());
         for (OrderBookEntry ask : orderBook.getAsks()) {
-            asks.put(new BigDecimal(ask.getPrice()), new BigDecimal(ask.getQty()));
+            ASKS.put(new BigDecimal(ask.getPrice()), new BigDecimal(ask.getQty()));
         }
-        depthCache.put(ASKS, asks);
 
-        NavigableMap<BigDecimal, BigDecimal> bids = new TreeMap<>(Comparator.reverseOrder());
         for (OrderBookEntry bid : orderBook.getBids()) {
-            bids.put(new BigDecimal(bid.getPrice()), new BigDecimal(bid.getQty()));
+            BIDS.put(new BigDecimal(bid.getPrice()), new BigDecimal(bid.getQty()));
         }
-        depthCache.put(BIDS, bids);
     }
 
-    /**
-     * Begins streaming of depth events.
-     */
-    private void startDepthEventStreaming(String symbol, int param) {
+    //open websocket client and get information of the bids and asks
+    private void startStreaming(String symbol, int param) {
         BinanceApiClientFactory factory = BinanceApiClientFactory.newInstance();
         BinanceApiWebSocketClient client = factory.newWebSocketClient();
 
-        AtomicLong currTime = new AtomicLong(System.currentTimeMillis());
-        AtomicInteger first = new AtomicInteger(1);
+        AtomicLong currTime = new AtomicLong(0);
 
         client.onDepthEvent(symbol.toLowerCase(), response -> {
-            if ((response.getUpdateId() > lastUpdateId) && (System.currentTimeMillis()- currTime.get() >= 10000 || first.get() == 1) ) {
+            if ((response.getUpdateId() > lastUpdateId) && (System.currentTimeMillis()- currTime.get() >= 10000) ) {
                 currTime.set(System.currentTimeMillis());
-                first.set(0);
-                //System.out.println(response);
                 lastUpdateId = response.getUpdateId();
-                updateOrderBook(getAsks(), response.getAsks());
-                updateOrderBook(getBids(), response.getBids());
-                printDepthCache(param);
+                updateOrderBook(ASKS, response.getAsks());
+                updateOrderBook(BIDS, response.getBids());
+                printOrderBook(param);
             }
         });
     }
 
-    /**
-     * Updates an order book (bids or asks) with a delta received from the server.
-     * <p>
-     * Whenever the qty specified is ZERO, it means the price should was removed from the order book.
-     */
+    // update the orderbook using deltas
     private void updateOrderBook(NavigableMap<BigDecimal, BigDecimal> lastOrderBookEntries, List<OrderBookEntry> orderBookDeltas) {
         for (OrderBookEntry orderBookDelta : orderBookDeltas) {
             BigDecimal price = new BigDecimal(orderBookDelta.getPrice());
@@ -90,55 +75,26 @@ public class WebSocket{
         }
     }
 
-    public NavigableMap<BigDecimal, BigDecimal> getAsks() {
-        return depthCache.get(ASKS);
-    }
 
-    public NavigableMap<BigDecimal, BigDecimal> getBids() {
-        return depthCache.get(BIDS);
-    }
 
-    /**
-     * @return the best ask in the order book
-     */
-    private Map.Entry<BigDecimal, BigDecimal> getBestAsk() {
-        return getAsks().lastEntry();
-    }
-
-    /**
-     * @return the best bid in the order book
-     */
-    private Map.Entry<BigDecimal, BigDecimal> getBestBid() {
-        return getBids().firstEntry();
-    }
-
-    /**
-     * @return a depth cache, containing two keys (ASKs and BIDs), and for each, an ordered list of book entries.
-     */
-    public Map<String, NavigableMap<BigDecimal, BigDecimal>> getDepthCache() {
-        return depthCache;
-    }
-
-    /**
-     * Prints the cached order book / depth of a symbol as well as the best ask and bid price in the book.
-     */
-    private void printDepthCache(int param) {
+    // print the orderbook to PARAM levels
+    private void printOrderBook(int param) {
         //System.out.println(depthCache);
         List<String> askPriceList = new ArrayList<>();
         List<String> askQtyList = new ArrayList<>();
         List<String> BidPriceList = new ArrayList<>();
         List<String> BidQtyList = new ArrayList<>();
-        getAsks().entrySet().forEach(entry -> toDepthCacheEntryString(entry, askPriceList, askQtyList));
-        getBids().entrySet().forEach(entry -> toDepthCacheEntryString(entry, BidPriceList, BidQtyList));
+        ASKS.entrySet().forEach(entry -> updateList(entry, askPriceList, askQtyList));
+        BIDS.entrySet().forEach(entry -> updateList(entry, BidPriceList, BidQtyList));
 
 
-        String bs = new String("BID_SIZE");
-        String bp = new String("BID_PRICE");
-        String as = new String("ASK_SIZE");
-        String ap = new String("ASK_PRICE");
+        String bs = "BID_SIZE";
+        String bp = "BID_PRICE";
+        String as = "ASK_SIZE";
+        String ap = "ASK_PRICE";
         System.out.printf("%-10s%10s %-10s%10s%n", bs,bp,ap,as);
         for(int i=0; i< param;i++){
-            String nul = new String(" ");
+            String nul = " ";
             if(i >= askPriceList.size() && i >= BidPriceList.size()){
                 break;
             }
@@ -147,11 +103,11 @@ public class WebSocket{
 
             }
             else if(i >= BidPriceList.size()){
-                System.out.printf("%-10s%10s %-10s%10s%n", nul, nul, askPriceList.get(askPriceList.size()-i-1),askQtyList.get(askQtyList.size()-i-1));
+                System.out.printf("%-10s%10s %-10s%10s%n", nul, nul, askPriceList.get(i),askQtyList.get(i));
 
             }
             else{
-                System.out.printf("%-10s%10s %-10s%10s%n", BidQtyList.get(i), BidPriceList.get(i), askPriceList.get(askPriceList.size()-i-1),askQtyList.get(askQtyList.size()-i-1));
+                System.out.printf("%-10s%10s %-10s%10s%n", BidQtyList.get(i), BidPriceList.get(i), askPriceList.get(i),askQtyList.get(i));
 
             }
 
@@ -159,19 +115,13 @@ public class WebSocket{
 
 
     }
-
-    /**
-     * Pretty prints an order book entry in the format "price / quantity".
-     */
-    private static void toDepthCacheEntryString(Map.Entry<BigDecimal, BigDecimal> depthCacheEntry, List<String> PriceList, List<String> QTYList) {
-
+    // Use to put the values into a list
+    private static void updateList(Map.Entry<BigDecimal, BigDecimal> depthCacheEntry, List<String> PriceList, List<String> QTYList) {
         PriceList.add(depthCacheEntry.getKey().setScale(2, BigDecimal.ROUND_HALF_UP).toPlainString());
         QTYList.add(depthCacheEntry.getValue().setScale(2, BigDecimal.ROUND_HALF_UP).toPlainString());
-
-
     }
 
     public static void main(String[] args) {
-        ;
+
     }
 }
